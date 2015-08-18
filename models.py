@@ -60,7 +60,9 @@ class Conference(ndb.Model):
     endDate         = ndb.DateProperty()
     maxAttendees    = ndb.IntegerProperty()
     seatsAvailable  = ndb.IntegerProperty()
-    session_keys  = ndb.StringProperty(repeated=True)
+    # Store a list of session_keys if has-a relationship.
+    # Not needed for an ancestor relationship
+    # session_keys  = ndb.StringProperty(repeated=True)
 
 class ConferenceForm(messages.Message):
     """ConferenceForm -- Conference outbound form message"""
@@ -76,7 +78,9 @@ class ConferenceForm(messages.Message):
     endDate         = messages.StringField(10) #DateTimeField()
     websafeKey      = messages.StringField(11)
     organizerDisplayName = messages.StringField(12)
-    session_keys = messages.StringField(13, repeated=True)
+    # Store a list of session_keys if has-a relationship.
+    # Not needed for an ancestor relationship
+    # session_keys = messages.StringField(13, repeated=True)
 
 class ConferenceForms(messages.Message):
     """ConferenceForms -- multiple Conference outbound form message"""
@@ -142,7 +146,6 @@ class SessionForm(messages.Message):
     date = messages.StringField(7)
     start_time = messages.StringField(8)
     conf_websafekey = messages.StringField(9)
-    # creator_displayname = messages.StringField(10)
 
 class SessionForms(messages.Message):
     items = messages.MessageField(SessionForm, 1, repeated=True)
