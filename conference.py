@@ -110,6 +110,11 @@ SESSION_GET_BY_SPEAKER = endpoints.ResourceContainer(
     speaker=messages.StringField(1),
 )
 
+SESSION_GET_BY_KEY = endpoints.ResourceContainer(
+    message_types.VoidMessage,
+    sessionKey=messages.StringField(1),
+)
+
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 
@@ -590,8 +595,6 @@ class ConferenceApi(remote.Service):
             raise endpoints.NotFoundException(
                 'No conf found with key: %s' % request.websafeConferenceKey)
         sessions = Session.query(ancestor=conf.key)
-        # prof = session.key.parent().get()
-        # return ConferenceForm
         return SessionForms(
             items=[self._copySessionToForm(session) for session in sessions]
         )
@@ -624,24 +627,11 @@ class ConferenceApi(remote.Service):
         if not conf:
             raise endpoints.NotFoundException(
                 'No conf found with key: %s' % request.websafeConferenceKey)
-        # prof = session.key.parent().get()
-        # return ConferenceForm
         items = []
         sessions = Session.query(ancestor=conf.key).filter(Session.type_of_session==request.typeOfSession)
         return SessionForms(
             items=[self._copySessionToForm(session) for session in sessions]
         )
-        # Following code for session-conference has-a relationship
-        # for session_key in conf.session_keys:
-        #     print "****** The session key is: ", session_key
-        #     session = ndb.Key(urlsafe=session_key).get()
-        #     if not session:
-        #         raise endpoints.NotFoundException(
-        #             'No sessions for this conference! Conference key: ' % request.websafeConferenceKey)
-        
-            # if session.type_of_session == request.typeOfSession:
-            #     items.append(self._copySessionToForm(session))
-            # print "****** These are the items we collected: ", items
         return SessionForms(items=items)
 
 
@@ -656,24 +646,25 @@ class ConferenceApi(remote.Service):
             sessions = Session.query(ancestor=conf.key).filter(Session.speaker==request.speaker)
             for session in sessions:
                 items.append(self._copySessionToForm(session))
-        print "Here are the collected items: ", items
         return SessionForms(items=items)
-        # Following code for session conference has-a relationship 
-        #     print "****** requested speaker of session: ", request.speaker
-        #     print "****** conference obj: ", conf
-        #     for session_key in conf.session_keys:
-        #         print "****** The session key is: ", session_key
-        #         session = ndb.Key(urlsafe=session_key).get()
-        #         if not session:
-        #             pass
-        #         elif session.speaker == request.speaker:
-        #             print "@@@@ Speaker exists in: ", conf.name
-        #             print "@@@@ The session was: ", session.name
-        #             items.append(self._copySessionToForm(session))
-        #     print "****** These are the items we collected: "
-        #     for item in items:
-        #         print item.name
-        # return SessionForms(items=items)
+
+
+    @endpoints.method(SESSION_GET_BY_KEY, BooleanMessage, path='sessionsoo/addToWishList/{sessionKey}',
+                      http_method='POST', name='addSessionToWishlist')
+    def addSessionToWishlist(self, request):
+        prof = self._getProfileFromUser()
+        session = ndb.Key(urlsafe=request.sessionKey).get()
+        # print "the session's parent is: ", session.parent
+        if not session:
+            raise endpoints.NotFoundException('No session with that key: ', session.key)
+            return BooleanMessage(data=False)
+        if request.sessionKey in session.session_wish_list:
+                raise ConflictException(
+                    "You have already expressed your desire to be at this session!")
+        else:
+            prof.session_wish_list.append(request.sessionKey)
+            prof.put()
+        return BooleanMessage(data=True)
 
 
     @endpoints.method(SessionForm, SessionForm, path='sessions',
@@ -700,19 +691,16 @@ class ConferenceApi(remote.Service):
             raise endpoints.BadRequestException("Session 'start time' field required")
 
         wsck = request.conf_websafekey
-        print "The websafe key is : ", wsck
         conf = ndb.Key(urlsafe=wsck).get()
         # print "The conf key is : ", conf.key()
 
         if not conf:
             raise endpoints.NotFoundException(
                 'No conference found with key: %s' % wsck)
-        print "request fields, ", request.all_fields
         # copy ConferenceForm/ProtoRPC Message into dict
         data = {field.name: getattr(request, field.name) for field in request.all_fields()}
         del data['conf_websafekey']
 
-        print "the type_of_session is: ", data['type_of_session']
         data['type_of_session'] = str(data['type_of_session'])
         # add default values for those missing (both data model & outbound Message)
         for df in DEFAULTS_SESSION:
@@ -725,16 +713,7 @@ class ConferenceApi(remote.Service):
             data['date'] = datetime.strptime(data['date'][:10], "%Y-%m-%d").date()
         if data['start_time']:
             data['start_time'] = datetime.strptime(data['start_time'][:10], "%H:%M").time()
-        # The following code makes the session and conference a "has-a" relationship
-        # p_key = ndb.Key(Profile, user_id)
-        # print "the profile key is: ", str(p_key)
-        # s_id = Session.allocate_ids(size=1)[0]
-        # s_key = ndb.Key(Session, s_id)
-        # print "The session key: ", str(s_key)
-        # data['key'] = s_key
-        # data['creator_name'] = self._getProfileFromUser().displayName
-        # print "The creator is: ", data['creator_name']
-
+        
         # The following code makes the session a child of the conference
         # Get the Key instance form the urlsafe key
         c_key = ndb.Key(urlsafe=wsck)
@@ -745,13 +724,6 @@ class ConferenceApi(remote.Service):
         # creation of Conference & return (modified) ConferenceForm
         sess = Session(**data)
         sess.put()
-        print "What is sess? Here it is: ", sess
-        print "Session key is ", ndb.Key(Session, s_id).urlsafe()
-        print "Again, the session key is: ", sess.key.urlsafe()
-
-        # conf.session_keys.append(ndb.Key(Session, s_id).urlsafe())
-        # conf.put()
-
         return request
 
 api = endpoints.api_server([ConferenceApi]) # register API
