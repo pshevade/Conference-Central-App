@@ -596,10 +596,10 @@ class ConferenceApi(remote.Service):
                 'No conf found with key: %s' % request.websafeConferenceKey)
         sessions = Session.query(ancestor=conf.key)
         return SessionForms(
-            items=[self._copySessionToForm(session) for session in sessions]
+            items=[self._copySessionToForm(session, conf) for session in sessions]
         )
 
-    def _copySessionToForm(self, session):
+    def _copySessionToForm(self, session, conf):
         sf = SessionForm()
         for field in sf.all_fields():
             if hasattr(session, field.name):
@@ -615,9 +615,12 @@ class ConferenceApi(remote.Service):
                         setattr(sf, field.name, getattr(TypeOfSession, 'NOT_SPECIFIED'))
                 else:
                     setattr(sf, field.name, getattr(session, field.name))
+            elif field.name == "conf_websafekey":
+                setattr(sf, field.name, conf.key.urlsafe())
+            elif field.name == "sess_websafekey":
+                setattr(sf, field.name, session.key.urlsafe())
         sf.check_initialized()
         return sf
-
 
     @endpoints.method(SESSION_GET_BY_TYPE_REQUEST, SessionForms,
         path='conference/{websafeConferenceKey}/sessions/type/{typeOfSession}',
@@ -633,7 +636,6 @@ class ConferenceApi(remote.Service):
             items=[self._copySessionToForm(session) for session in sessions]
         )
         return SessionForms(items=items)
-
 
     @endpoints.method(SESSION_GET_BY_SPEAKER, SessionForms,
         path='sessions/speaker/{speaker}',
@@ -658,7 +660,7 @@ class ConferenceApi(remote.Service):
         if not session:
             raise endpoints.NotFoundException('No session with that key: ', session.key)
             return BooleanMessage(data=False)
-        if request.sessionKey in session.session_wish_list:
+        if request.sessionKey in prof.session_wish_list:
                 raise ConflictException(
                     "You have already expressed your desire to be at this session!")
         else:
@@ -697,9 +699,10 @@ class ConferenceApi(remote.Service):
         if not conf:
             raise endpoints.NotFoundException(
                 'No conference found with key: %s' % wsck)
-        # copy ConferenceForm/ProtoRPC Message into dict
+        # copy SessionForm/ProtoRPC Message into dict
         data = {field.name: getattr(request, field.name) for field in request.all_fields()}
         del data['conf_websafekey']
+        del data['sess_websafekey']
 
         data['type_of_session'] = str(data['type_of_session'])
         # add default values for those missing (both data model & outbound Message)
@@ -713,7 +716,7 @@ class ConferenceApi(remote.Service):
             data['date'] = datetime.strptime(data['date'][:10], "%Y-%m-%d").date()
         if data['start_time']:
             data['start_time'] = datetime.strptime(data['start_time'][:10], "%H:%M").time()
-        
+
         # The following code makes the session a child of the conference
         # Get the Key instance form the urlsafe key
         c_key = ndb.Key(urlsafe=wsck)

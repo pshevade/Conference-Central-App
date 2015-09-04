@@ -148,6 +148,8 @@ class SessionForm(messages.Message):
     date = messages.StringField(7)
     start_time = messages.StringField(8)
     conf_websafekey = messages.StringField(9)
+    sess_websafekey = messages.StringField(10)
+
 
 class SessionForms(messages.Message):
     items = messages.MessageField(SessionForm, 1, repeated=True)
