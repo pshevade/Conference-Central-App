@@ -40,6 +40,7 @@ from models import Session
 from models import SessionForm
 from models import SessionForms
 from models import TypeOfSession
+from models import Speaker
 
 from settings import WEB_CLIENT_ID
 from settings import ANDROID_CLIENT_ID
@@ -685,16 +686,37 @@ class ConferenceApi(remote.Service):
 
         if not request.name:
             raise endpoints.BadRequestException("Session 'name' field required")
-        if not request.speaker:
-            raise endpoints.BadRequestException("Session 'speaker' field required")
+        if not request.speaker_email:
+            raise endpoints.BadRequestException("Session 'speaker_email' field required")
         if not request.date:
             raise endpoints.BadRequestException("Session 'date' field required")
         if not request.start_time:
             raise endpoints.BadRequestException("Session 'start time' field required")
 
+        # Let's get the conference object from the websafe key, as entered by the user
         wsck = request.conf_websafekey
         conf = ndb.Key(urlsafe=wsck).get()
         # print "The conf key is : ", conf.key()
+
+        # Let's get the speaker, as per the email address that user entered
+        # check if speaker object exists:
+        speaker_key = ndb.Key(Speaker, request.speaker_email)
+        speaker = speaker_key.get()
+        # if speaker object does not exist, check if the speaker has a user profile already
+        if not speaker:
+            sp_key = ndb.Key(Profile, request.speaker_email)
+            speaker_profile = sp_key.get()
+            # If the speaker doesn't have a user profile yet
+            if not speaker_profile:
+                sp_key_urlsafe = ""
+            else:
+                sp_key_urlsafe = sp_key.urlsafe()
+            speaker = Speaker(key=speaker_key,
+                              name=request.speaker_name,
+                              email=request.speaker_email,
+                              user_profile_key=sp_key_urlsafe)
+            speaker.put()
+        speaker_key = speaker.key.urlsafe()
 
         if not conf:
             raise endpoints.NotFoundException(
@@ -703,6 +725,11 @@ class ConferenceApi(remote.Service):
         data = {field.name: getattr(request, field.name) for field in request.all_fields()}
         del data['conf_websafekey']
         del data['sess_websafekey']
+        del data['speaker_email']
+        del data['speaker_name']
+
+        # Once we have a speaker, we can put the key 
+        data['speaker_key'] = speaker_key
 
         data['type_of_session'] = str(data['type_of_session'])
         # add default values for those missing (both data model & outbound Message)
@@ -723,10 +750,11 @@ class ConferenceApi(remote.Service):
         s_id = Session.allocate_ids(size=1, parent=c_key)[0]
         s_key = ndb.Key(Session, s_id, parent=c_key)
         data['key'] = s_key
-        # create Conference, send email to organizer confirming
-        # creation of Conference & return (modified) ConferenceForm
+        
         sess = Session(**data)
         sess.put()
+
+        
         return request
 
 api = endpoints.api_server([ConferenceApi]) # register API

@@ -130,7 +130,7 @@ class Session(ndb.Model):
     name = ndb.StringProperty(required=True)
     creator_name = ndb.StringProperty()
     highlights = ndb.StringProperty()
-    speaker = ndb.StringProperty(required=True)
+    speaker_key = ndb.StringProperty(required=True)
     duration = ndb.IntegerProperty()
     type_of_session = ndb.StringProperty(default='NOT_SPECIFIED')
     date = ndb.DateProperty(required=True)
@@ -142,13 +142,21 @@ class SessionForm(messages.Message):
     name = messages.StringField(1)
     # creator_userid = messages.StringField(2)
     highlights = messages.StringField(3)
-    speaker = messages.StringField(4)
-    duration = messages.IntegerField(5)
-    type_of_session = messages.EnumField('TypeOfSession', 6)
-    date = messages.StringField(7)
-    start_time = messages.StringField(8)
-    conf_websafekey = messages.StringField(9)
-    sess_websafekey = messages.StringField(10)
+    speaker_name = messages.StringField(4)
+    speaker_email = messages.StringField(5)
+    duration = messages.IntegerField(6)
+    type_of_session = messages.EnumField('TypeOfSession', 7)
+    date = messages.StringField(8)
+    start_time = messages.StringField(9)
+    conf_websafekey = messages.StringField(10)
+    sess_websafekey = messages.StringField(11)
+
+
+class Speaker(ndb.Model):
+    name = ndb.StringProperty(required=True)
+    email = ndb.StringProperty(required=True)
+    # If the user exists, add the key
+    user_profile_key = ndb.StringProperty()
 
 
 class SessionForms(messages.Message):
