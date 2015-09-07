@@ -42,6 +42,9 @@ class ProfileForm(messages.Message):
     conferenceKeysToAttend = messages.StringField(4, repeated=True)
     session_wish_list = messages.StringField(5, repeated=True)
 
+class ProfileForms(messages.Message):
+    profiles = messages.MessageField(ProfileForm, 1, repeated=True)
+
 class StringMessage(messages.Message):
     """StringMessage-- outbound (single) string message"""
     data = messages.StringField(1, required=True)
@@ -119,6 +122,7 @@ class ConferenceQueryForm(messages.Message):
     operator = messages.StringField(2)
     value = messages.StringField(3)
 
+
 class ConferenceQueryForms(messages.Message):
     """ConferenceQueryForms -- multiple ConferenceQueryForm inbound form message"""
     filters = messages.MessageField(ConferenceQueryForm, 1, repeated=True)
@@ -133,8 +137,8 @@ class Session(ndb.Model):
     speaker_key = ndb.StringProperty(required=True)
     duration = ndb.IntegerProperty()
     type_of_session = ndb.StringProperty(default='NOT_SPECIFIED')
-    date = ndb.DateProperty(required=True)
-    start_time = ndb.TimeProperty(required=True)
+    date = ndb.DateTimeProperty(required=True)
+    start_time = ndb.DateTimeProperty(required=True)
 
 
 class SessionForm(messages.Message):
@@ -151,6 +155,16 @@ class SessionForm(messages.Message):
     conf_websafekey = messages.StringField(10)
     sess_websafekey = messages.StringField(11)
 
+class SessionQueryForm(messages.Message):
+    """SessionQueryForm -- Session query inbound form message"""
+    field = messages.StringField(1)
+    operator = messages.StringField(2)
+    value = messages.StringField(3)
+
+class SessionQueryForms(messages.Message):
+    """SessionQueryForms -- multiple SessionQueryForm inbound form message"""
+    websafeConferenceKey = messages.StringField(1)
+    filters = messages.MessageField(SessionQueryForm, 2, repeated=True)
 
 class Speaker(ndb.Model):
     name = ndb.StringProperty(required=True)

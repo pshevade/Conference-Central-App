@@ -28,6 +28,7 @@ from models import ConflictException
 from models import Profile
 from models import ProfileMiniForm
 from models import ProfileForm
+from models import ProfileForms
 from models import StringMessage
 from models import BooleanMessage
 from models import Conference
@@ -35,6 +36,8 @@ from models import ConferenceForm
 from models import ConferenceForms
 from models import ConferenceQueryForm
 from models import ConferenceQueryForms
+from models import SessionQueryForm
+from models import SessionQueryForms
 from models import TeeShirtSize
 from models import Session
 from models import SessionForm
@@ -85,6 +88,13 @@ FIELDS =    {
             'MAX_ATTENDEES': 'maxAttendees',
             }
 
+FIELDS_SESSION =    {
+            'DURATION': 'duration',
+            'DATE': 'date',
+            'START_TIME': 'start_time',
+            'TYPE_OF_SESSION': 'type_of_session',
+            }
+
 CONF_GET_REQUEST = endpoints.ResourceContainer(
     message_types.VoidMessage,
     websafeConferenceKey=messages.StringField(1),
@@ -111,9 +121,25 @@ SESSION_GET_BY_SPEAKER = endpoints.ResourceContainer(
     speaker=messages.StringField(1),
 )
 
+SESSION_GET_BY_WISHLIST = endpoints.ResourceContainer(
+    message_types.VoidMessage,
+    websafeConferenceKey=messages.StringField(1),
+)
+
 SESSION_GET_BY_KEY = endpoints.ResourceContainer(
     message_types.VoidMessage,
     sessionKey=messages.StringField(1),
+)
+
+SESSION_GET_BY_CONFERENCE_DATE = endpoints.ResourceContainer(
+    message_types.VoidMessage,
+    websafeConferenceKey=messages.StringField(1),
+    date=messages.StringField(2),
+)
+
+PROFILE_GET_BY_SESSION_IN_WISHLISHT = endpoints.ResourceContainer(
+    message_types.VoidMessage,
+    sessionKey=messages.StringField(2),
 )
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -307,32 +333,41 @@ class ConferenceApi(remote.Service):
         return q
 
 
-    def _formatFilters(self, filters):
+    def _formatFilters(self, filters, SESS_OR_CONF='conf'):
         """Parse, check validity and format user supplied filters."""
         formatted_filters = []
         inequality_field = None
-
+        extra_inequality_filters = []
+        print "Trying to format filters"
         for f in filters:
             filtr = {field.name: getattr(f, field.name) for field in f.all_fields()}
-
             try:
-                filtr["field"] = FIELDS[filtr["field"]]
+                if SESS_OR_CONF == 'conf':
+                    filtr["field"] = FIELDS[filtr["field"]]
+                elif SESS_OR_CONF == 'sess':
+                    filtr["field"] = FIELDS_SESSION[filtr["field"]]
                 filtr["operator"] = OPERATORS[filtr["operator"]]
             except KeyError:
                 raise endpoints.BadRequestException("Filter contains invalid field or operator.")
-
-            # Every operation except "=" is an inequality
+            # Every operation except "=" is an inequality - check only for conferences
             if filtr["operator"] != "=":
+                print "checking equality operator"
                 # check if inequality operation has been used in previous filters
                 # disallow the filter if inequality was performed on a different field before
                 # track the field on which the inequality operation is performed
                 if inequality_field and inequality_field != filtr["field"]:
-                    raise endpoints.BadRequestException("Inequality filter is allowed on only one field.")
+                    extra_inequality_filters.append(filtr)
                 else:
                     inequality_field = filtr["field"]
-
-            formatted_filters.append(filtr)
-        return (inequality_field, formatted_filters)
+                    formatted_filters.append(filtr)
+            else:
+                formatted_filters.append(filtr)
+            print "Done formatting one filter set"
+        print "Filters formatted just fine"
+        if SESS_OR_CONF == 'conf':
+            return (inequality_field, formatted_filters)
+        else:
+            return (inequality_field, formatted_filters, extra_inequality_filters)
 
 
     @endpoints.method(ConferenceQueryForms, ConferenceForms,
@@ -357,7 +392,6 @@ class ConferenceApi(remote.Service):
                 items=[self._copyConferenceToForm(conf, names[conf.organizerUserId]) for conf in \
                 conferences]
         )
-
 
 # - - - Profile objects - - - - - - - - - - - - - - - - - - -
 
@@ -584,6 +618,35 @@ class ConferenceApi(remote.Service):
 
 # -- FINAL PROJECT METHODS -- #
 
+    @endpoints.method(PROFILE_GET_BY_SESSION_IN_WISHLISHT, ProfileForms,
+        path='session/{sessionKey}/wishlist/everyone',
+        http_method='GET', name='getProfilesBySessionWishlist')
+    def getProfilesBySessionWishList(self, request):
+        """ Return all profiles who want to attend a particular session. """
+        session = ndb.Key(urlsafe=request.sessionKey).get()
+        if not session:
+            raise endpoints.NotFoundException(
+                'No session found with key: %s' % request.sessionKey)
+        profiles = Profile.query().filter(Profile.session_wish_list == session.key.urlsafe())
+
+        return ProfileForms(
+            profiles=[self._copyProfileToForm(profile) for profile in profiles])
+
+    @endpoints.method(SESSION_GET_BY_CONFERENCE_DATE, SessionForms,
+        path='conference/{websafeConferenceKey}/{date}/sessions',
+        http_method='GET', name='getConferenceSessionsByDate')
+    def getConferenceSessionsByDate(self, request):
+        """ Return the sessions that occur on a conference's particular date """
+        conf = ndb.Key(urlsafe=request.websafeConferenceKey).get()
+        date = datetime.strptime(request.date[:10], "%Y-%m-%d").date()
+        if not conf:
+            raise endpoints.NotFoundException(
+                'No conf found with key: %s' % request.websafeConferenceKey)
+        sessions = Session.query(ancestor=conf.key).filter(Session.date==date)
+        return SessionForms(
+            items=[self._copySessionToForm(session, conf) for session in sessions]
+        )
+
 
     @endpoints.method(SESSION_GET_REQUEST, SessionForms,
         path='conference/{websafeConferenceKey}/sessions',
@@ -634,7 +697,7 @@ class ConferenceApi(remote.Service):
         items = []
         sessions = Session.query(ancestor=conf.key).filter(Session.type_of_session==request.typeOfSession)
         return SessionForms(
-            items=[self._copySessionToForm(session) for session in sessions]
+            items=[self._copySessionToForm(session, conf) for session in sessions]
         )
         return SessionForms(items=items)
 
@@ -645,21 +708,23 @@ class ConferenceApi(remote.Service):
         print "****** We are inside getSessionsBySpeaker"
         conferences = Conference.query()
         items = []
-        for conf in conferences:
-            sessions = Session.query(ancestor=conf.key).filter(Session.speaker==request.speaker)
-            for session in sessions:
-                items.append(self._copySessionToForm(session))
+        speaker_set = Speaker.query().filter(Speaker.name==request.speaker)
+        for speaker in speaker_set:
+            for conf in conferences:
+                sessions = Session.query(ancestor=conf.key).filter(Session.speaker_key==speaker.key.urlsafe())
+                for session in sessions:
+                    items.append(self._copySessionToForm(session, conf))
         return SessionForms(items=items)
 
 
-    @endpoints.method(SESSION_GET_BY_KEY, BooleanMessage, path='sessionsoo/addToWishList/{sessionKey}',
+    @endpoints.method(SESSION_GET_BY_KEY, BooleanMessage, path='sessions/addToWishList/{sessionKey}',
                       http_method='POST', name='addSessionToWishlist')
     def addSessionToWishlist(self, request):
         prof = self._getProfileFromUser()
         session = ndb.Key(urlsafe=request.sessionKey).get()
         # print "the session's parent is: ", session.parent
         if not session:
-            raise endpoints.NotFoundException('No session with that key: ', session.key)
+            raise endpoints.NotFoundException('No session with that key: %s' % request.sessionKey)
             return BooleanMessage(data=False)
         if request.sessionKey in prof.session_wish_list:
                 raise ConflictException(
@@ -668,6 +733,22 @@ class ConferenceApi(remote.Service):
             prof.session_wish_list.append(request.sessionKey)
             prof.put()
         return BooleanMessage(data=True)
+
+
+    @endpoints.method(SESSION_GET_BY_WISHLIST, SessionForms, 
+            path='conference/{websafeConferenceKey}/sessions/users/wishlist', http_method='GET', name='getSessionsInWishlist')
+    def getSessionsInWishlist(self, request):
+        """ Return all the sessions a user is going to attend in a conference. """
+        profile = self._getProfileFromUser()
+        conf = ndb.Key(urlsafe=request.websafeConferenceKey).get()
+        if not conf:
+            raise endpoints.NotFoundException('No conference with that key: %s', request.websafeConferenceKey)
+        sessions = Session.query(ancestor=conf.key)
+        items = []
+        for session in sessions:
+            if session.key.urlsafe() in profile.session_wish_list:
+                items.append(self._copySessionToForm(session, conf))
+        return SessionForms(items=items)
 
 
     @endpoints.method(SessionForm, SessionForm, path='sessions',
@@ -740,9 +821,9 @@ class ConferenceApi(remote.Service):
 
         # convert dates from strings to Date objects; set month based on start_date
         if data['date']:
-            data['date'] = datetime.strptime(data['date'][:10], "%Y-%m-%d").date()
+            data['date'] = datetime.strptime(data['date'][:10], "%Y-%m-%d")
         if data['start_time']:
-            data['start_time'] = datetime.strptime(data['start_time'][:10], "%H:%M").time()
+            data['start_time'] = datetime.strptime(data['start_time'][:10], "%H:%M")
 
         # The following code makes the session a child of the conference
         # Get the Key instance form the urlsafe key
@@ -750,11 +831,147 @@ class ConferenceApi(remote.Service):
         s_id = Session.allocate_ids(size=1, parent=c_key)[0]
         s_key = ndb.Key(Session, s_id, parent=c_key)
         data['key'] = s_key
-        
         sess = Session(**data)
         sess.put()
-
-        
         return request
+
+
+    def _getSessionsQuery(self, inequality_field, filter_set, conf_key):
+        """ Return formatted query from the submitted filters for Sessions."""
+        s = Session.query(ancestor=conf_key)
+        print "This is what one filter set looks like: ", filter_set
+        if not inequality_field:
+            s = s.order(Session.name)
+        else:
+            s = s.order(ndb.GenericProperty(inequality_field))
+            s = s.order(Session.name)
+        print "Here is the filter set in sessionsQuery ", filter_set
+        for filtr in filter_set:
+            if filtr["field"] == "start_time":
+                print "this is the value: ", filtr["value"]
+                value = datetime.strptime(filtr["value"][:10], "%H:%M")
+                print "Formatting the start time field: ", value
+            elif filtr["field"] == "date":
+                value = datetime.strptime(filtr["value"][:10], "%Y-%m-%d")
+                print "Formatting the date: ", filtr["value"]
+            elif filtr["field"] == "duration":
+                value = int(filtr["value"])
+            else:
+                value = filtr["value"]
+                print "Post formatting, the filters are: ", filtr
+            formatted_query = ndb.query.FilterNode(filtr["field"], filtr["operator"], value)
+            s = s.filter(formatted_query)
+            print "the first filters results: ", s
+        return s
+
+    def _getExtraInequalityFiltering(self, filters, session_list):
+        processed_session_list = []
+        print "These are the extra inq filters: ", filters
+        for filtr in filters:
+            for session in session_list:
+                print "The session is: ", session.name
+                if filtr["field"] == "start_time":
+                    value = datetime.strptime(filtr["value"], "%H:%M").time()
+                    if filtr["operator"] == '>':
+                        if session.start_time > value:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '>=':
+                        if session.start_time >= value:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '<':
+                        if session.start_time < value:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '<=':
+                        if session.start_time <= value:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '!=':
+                        if session.start_time != value:
+                            processed_session_list.append(session)
+                elif filtr["field"] == "date":
+                    value = datetime.strptime(filtr["value"], "%Y-%m-%d").date()
+                    if filtr["operator"] == '>':
+                        if session.date > value:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '>=':
+                        if session.date >= value:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '<':
+                        if session.date < value:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '<=':
+                        if session.date <= value:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '!=':
+                        if session.date != value:
+                            processed_session_list.append(session)
+                elif filtr["field"] == "duration":
+                    print "The duration filter is: ", filtr['value'], filtr['operator']
+                    filtr["value"] = int(filtr["value"])
+                    if filtr["operator"] == '>':
+                        print "The session's duration is: ", session.duration
+                        print "Yes the duration is greater than ", filtr['value']
+                        if session.duration > filtr["value"]:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '>=':
+                        if session.duration >= filtr["value"]:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '<':
+                        if session.duration < filtr["value"]:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '<=':
+                        if session.duration <= filtr["value"]:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '!=':
+                        if session.duration != filtr["value"]:
+                            processed_session_list.append(session)
+                elif filtr["field"] == "type_of_session":
+                    # filtr["value"] = datetime.strptime(filtr["value"], "%Y-%m-%d")
+                    if filtr["operator"] == '>':
+                        if session.type_of_session > filtr["value"]:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '>=':
+                        if session.type_of_session >= filtr["value"]:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '<':
+                        if session.type_of_session < filtr["value"]:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '<=':
+                        if session.type_of_session <= filtr["value"]:
+                            processed_session_list.append(session)
+                    elif filtr["operator"] == '!=':
+                        if session.type_of_session != filtr["value"]:
+                            processed_session_list.append(session)
+            # after each filter is processed, reset the lists
+            session_list = processed_session_list
+            processed_session_list = []
+        return session_list
+
+
+    @endpoints.method(SessionQueryForms, SessionForms,
+            path='querySessions',
+            http_method='POST',
+            name='querySessions')
+    def querySessions(self, request):
+        print "We are in query sessions"
+        conf = ndb.Key(urlsafe=request.websafeConferenceKey).get()
+        if not conf:
+            raise endpoints.NotFoundException('No conference exists with key: %s' % request.websafeConferenceKey)
+        # sessions = Session.query(ancestor=conf.key)
+        print "got the conf"
+        inequality_field, filters, extra_inequality_filters = self._formatFilters(request.filters, 'sess')
+        print "Got the filters: ", filters
+        sessions_list = []
+        sessions = self._getSessionsQuery(inequality_field, filters, conf.key)
+        # Get the sessions objects
+        print "We are out of the first query"
+        print "the sessions query as returned: ", sessions
+        for session in sessions:
+            print "The session's startimes in the first result: ", session.start_time
+            sessions_list.append(session)
+
+        sessions_list = self._getExtraInequalityFiltering(extra_inequality_filters, sessions_list)
+        return SessionForms(
+            items=[self._copySessionToForm(session, conf) for session in sessions_list]
+        )
 
 api = endpoints.api_server([ConferenceApi]) # register API
