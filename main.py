@@ -8,6 +8,11 @@ $Id$
 
 created by wesc on 2014 may 24
 
+UPDATED to include the SetFeaturedSpeaker class and the _cacheFeaturedSpeaker 
+function to enable storing a featured speaker in memcache.
+
+- Prasanna Shevade
+
 """
 
 __author__ = 'wesc+api@google.com (Wesley Chun)'
@@ -49,8 +54,6 @@ class SetFeaturedSpeaker(webapp2.RequestHandler):
 
     def post(self):
         """Set the featured speaker here"""
-        # print "Speaker is: ", self.request.speaker
-        # print "Have spoken how often: ", self.request.count
         _cacheFeaturedSpeaker(self.request.get('speaker'), self.request.get('count'))
 
 
@@ -60,17 +63,12 @@ def _cacheFeaturedSpeaker(speaker, count):
     print "Inside cacheFeaturedSpeaker"
     exisiting_speaker_count = memcache.get(MEMCACHE_SPEAKER_COUNT_KEY)
     print "this is the existing speaker count: ", exisiting_speaker_count
-    if count >= exisiting_speaker_count:
+    if count >= exisiting_speaker_count and count > 1:
         featured_speaker = ANNOUNCEMENT_TPL % speaker
         memcache.set(MEMCACHE_FEATURED_KEY, featured_speaker)
         memcache.set(MEMCACHE_SPEAKER_NAME_KEY, speaker)
         memcache.set(MEMCACHE_SPEAKER_COUNT_KEY, count)
-    # If there are no sold out conferences,
-    # delete the memcache announcements entry
-    # featured_speaker = ""
-    # memcache.delete(MEMCACHE_ANNOUNCEMENTS_KEY)
 
-    return featured_speaker
 
 app = webapp2.WSGIApplication([
     ('/crons/set_announcement', SetAnnouncementHandler),
