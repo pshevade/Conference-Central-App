@@ -57,6 +57,8 @@ API_EXPLORER_CLIENT_ID = endpoints.API_EXPLORER_CLIENT_ID
 MEMCACHE_ANNOUNCEMENTS_KEY = "RECENT_ANNOUNCEMENTS"
 ANNOUNCEMENT_TPL = ('Last chance to attend! The following conferences '
                     'are nearly sold out: %s')
+MEMCACHE_FEATURED_KEY = "FEATURED_SPEAKER"
+
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 DEFAULTS = {
@@ -505,6 +507,13 @@ class ConferenceApi(remote.Service):
         return StringMessage(data=memcache.get(MEMCACHE_ANNOUNCEMENTS_KEY) or "")
 
 
+    @endpoints.method(message_types.VoidMessage, StringMessage,
+            path='sessions/featuredspeaker/get',
+            http_method='GET', name='getFeaturedSpeaker')
+    def getFeaturedSpeaker(self, request):
+        """Return Announcement from memcache."""
+        return StringMessage(data=memcache.get(MEMCACHE_FEATURED_KEY) or "")
+
 # - - - Registration - - - - - - - - - - - - - - - - - - - -
 
     @ndb.transactional(xg=True)
@@ -833,6 +842,11 @@ class ConferenceApi(remote.Service):
         data['key'] = s_key
         sess = Session(**data)
         sess.put()
+        # Count how many sessions the speaker is to speak in.
+        speakers_count = Session.query(ancestor=conf.key).filter(Session.speaker_key == sess.speaker_key).count()
+        taskqueue.add(params={'speaker': speaker.name, 'count': speakers_count},
+            url='/tasks/set_featured_speaker'
+        )
         return request
 
 
